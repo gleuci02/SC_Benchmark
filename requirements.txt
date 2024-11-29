@@ -1,0 +1,7 @@
+numpy<2
+scikit-learn
+spams
+pandas
+scipy
+progressbar2
+torchvision + torch
