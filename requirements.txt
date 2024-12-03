@@ -4,4 +4,8 @@ spams
 pandas
 scipy
 progressbar2
-torchvision + torch
+torchvision
+torch
+matplotlib
+tensorflow
+keras

@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 
-def plot_metrics(algorithm_names, acc_scores, nmi_scores, output_file="results/metrics_plot.png"):
+def plot_metrics(algorithm_names, acc_scores, nmi_scores, dataset, output_file="results/metrics_plot.png"):
     """
     Plot ACC and NMI scores for each algorithm.
 
@@ -10,6 +10,8 @@ def plot_metrics(algorithm_names, acc_scores, nmi_scores, output_file="results/m
     - nmi_scores: list of float, NMI scores for each algorithm.
     - output_file: str, Path to save the plot (default: "results/metrics_plot.png").
     """
+    output_file = f"results/metrics_plot{dataset}.png"
+
     x = range(len(algorithm_names))
 
     # Create the bar chart
