@@ -9,11 +9,10 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 from torch.optim import Adam
 from torch.utils.data import DataLoader
-from utils import LoadDataset, cluster_acc
 import warnings
-from AutoEncoder import AE
-from InitializeD import Initialization_D
-from Constraint import D_constraint1, D_constraint2
+from .AutoEncoder import AE
+from .InitializeD import Initialization_D
+from .Constraint import D_constraint1, D_constraint2
 import time
 warnings.filterwarnings("ignore")
    
@@ -93,11 +92,58 @@ class EDESC(nn.Module):
         total_loss = reconstr_loss + beta * kl_loss + loss_d1 + loss_d2
 
         return total_loss
+    
+    def fit(self, X):
+        """
+        Train the EDESC model.
+        Args:
+            X: Input data as a NumPy array.
+        """
+        args = args
+        device = torch.device("cpu")
+        X = torch.tensor(X).float().to(device)
+        optimizer = Adam(self.model.parameters(), lr=self.config["lr"])
 
-		
-def refined_subspace_affinity(s):
-    weight = s**2 / s.sum(0)
-    return (weight.t() / weight.sum(1)).t()
+        # Pretrain autoencoder
+        self.model.pretrain(self.config.get("MNIST", "data/mnist/MNIST/raw/train-images-idx3-ubyte"))
+
+        # Initialize clustering with KMeans
+        with torch.no_grad():
+            x_bar, hidden = self.model.ae(X)
+        kmeans = KMeans(n_clusters=self.config["n_clusters"], n_init=10)
+        y_pred = kmeans.fit_predict(hidden.cpu().numpy())
+
+        # Initialize D
+        D = Initialization_D(hidden, y_pred, self.config["n_clusters"], self.config["d"])
+        self.model.D.data = torch.tensor(D).float().to(self.device)
+
+        # Training loop
+        for epoch in range(self.config["epochs"]):
+            x_bar, s, z = self.model(X)
+            s_tilde = self._refined_subspace_affinity(s)
+
+            # Loss calculation
+            loss = self.model.total_loss(
+                X, x_bar, z, pred=s, target=s_tilde, dim=self.config["d"], n_clusters=self.config["n_clusters"], beta=self.config["beta"]
+            )
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        
+    def predict(self, X):
+        """
+        Predict cluster labels using the trained EDESC model.
+        Args:
+            X: Input data as a NumPy array.
+        Returns:
+            Predicted cluster labels as a NumPy array.
+        """
+        device = torch.device("cpu")
+        X = torch.tensor(X).float().to(device)
+        with torch.no_grad():
+            _, s, _ = self.model(X)
+        return torch.argmax(s, dim=1).cpu().numpy()
 
 def pretrain_ae(model):
 
@@ -119,85 +165,11 @@ def pretrain_ae(model):
                                             total_loss / (batch_idx + 1)))
         torch.save(model.state_dict(), args.pretrain_path)
     print("Model saved to {}.".format(args.pretrain_path))
-    
-def train_EDESC():
 
-    model = EDESC(
-        n_enc_1=500,
-        n_enc_2=500,
-        n_enc_3=1000,
-        n_dec_1=1000,
-        n_dec_2=500,
-        n_dec_3=500,
-        n_input=args.n_input,
-        n_z=args.n_z,
-        n_clusters=args.n_clusters,
-        num_sample = args.num_sample,
-        pretrain_path=args.pretrain_path).to(device)
-    start = time.time()      
 
-    # Load pre-trained model
-    model.pretrain('reuters.pkl')
-    optimizer = Adam(model.parameters(), lr=args.lr)
-    
-    # Cluster parameter initiate
-    data = dataset.x
-    y = dataset.y
-    data = torch.Tensor(data).to(device)
-    x_bar, hidden = model.ae(data)
-    kmeans = KMeans(n_clusters=args.n_clusters, n_init=10) 
 
-    # Get clusters from Consine K-means 
-    # ~ X = hidden.data.cpu().numpy()
-    # ~ length = np.sqrt((X**2).sum(axis=1))[:,None]
-    # ~ X = X / length
-    # ~ y_pred = kmeans.fit_predict(X)
- 
-    # Get clusters from K-means
-    y_pred = kmeans.fit_predict(hidden.data.cpu().numpy())
-    print("Initial Cluster Centers: ", y_pred)
-    
-    # Initialize D
-    D = Initialization_D(hidden, y_pred, args.n_clusters, args.d)
-    D = torch.tensor(D).to(torch.float32)
-    accmax = 0
-    nmimax = 0  
-    y_pred_last = y_pred
-    model.D.data = D.to(device)
-    
-    model.train()
-    
-    for epoch in range(200):
-        x_bar, s, z = model(data)
 
-        # Update refined subspace affinity
-        tmp_s = s.data
-        s_tilde = refined_subspace_affinity(tmp_s)
 
-        # Evaluate clustering performance
-        y_pred = tmp_s.cpu().detach().numpy().argmax(1)
-        delta_label = np.sum(y_pred != y_pred_last).astype(
-            np.float32) / y_pred.shape[0]
-        y_pred_last = y_pred
-        acc = cluster_acc(y, y_pred)
-        nmi = nmi_score(y, y_pred)
-        if acc > accmax:
-            accmax = acc
-        if nmi > nmimax:
-            nmimax = nmi            
-        print('Iter {}'.format(epoch), ':Current Acc {:.4f}'.format(acc),
-                  ':Max Acc {:.4f}'.format(accmax),', Current nmi {:.4f}'.format(nmi), ':Max nmi {:.4f}'.format(nmimax))
-        
-
-        ############## Total loss function ######################
-        loss = model.total_loss(data, x_bar, z, pred=s, target=s_tilde, dim=args.d, n_clusters = args.n_clusters, beta = args.beta)
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-    end = time.time()
-    print('Running time: ', end-start)
-    return accmax, nmimax
  
 
 if __name__ == "__main__":
@@ -218,6 +190,7 @@ if __name__ == "__main__":
     args.cuda = torch.cuda.is_available()
     print("use cuda: {}".format(args.cuda))
     device = torch.device("cuda" if args.cuda else "cpu")
+
     args.dataset = 'reuters'
     if args.dataset == 'reuters':
         args.pretrain_path = 'data/reuters.pkl'
